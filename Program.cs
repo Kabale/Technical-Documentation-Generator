@@ -47,7 +47,7 @@ namespace dynamics.document.generator
 
                 // 3. Initialiser tous les parsers une seule fois
                 var entityParser = new EntityParser(extractor.CustomizationsXml);
-                var brParser = new BusinessRuleParser(extractor.CustomizationsXml);
+                var brParser = new BusinessRuleParser(extractor.CustomizationsXml, extractFolder);
                 var scriptParser = new FormScriptParser(extractor.CustomizationsXml);
                 var bpfParser = new BpfParser(extractor.CustomizationsXml, $"{extractFolder}\\Workflows");
                 var wfParser = new WorkflowParser(extractor.CustomizationsXml);

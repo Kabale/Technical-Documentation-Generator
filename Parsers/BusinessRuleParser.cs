@@ -13,10 +13,13 @@ namespace dynamics.document.generator.Parsers
     public class BusinessRuleParser
     {
         private readonly XDocument _customizations;
+        private readonly string _extractFolderPath;
 
-        public BusinessRuleParser(XDocument customizations)
+
+        public BusinessRuleParser(XDocument customizations, string extractFolder)
         {
             _customizations = customizations ?? throw new ArgumentNullException(nameof(customizations));
+            _extractFolderPath = extractFolder;
         }
 
         /// <summary>API historique conservée. Les champs et le résumé sont maintenant alimentés par le parseur XML.</summary>
@@ -30,14 +33,18 @@ namespace dynamics.document.generator.Parsers
                     (!string.IsNullOrWhiteSpace(entityLogicalName) && Value(workflow, "PrimaryEntity") != entityLogicalName))
                     continue;
 
+                var XamlFileName = Value(workflow, "XamlFileName") ?? Value(workflow, "Xaml");
+                XDocument RawXaml = XDocument.Load($"{_extractFolderPath}{XamlFileName}");
+
                 var rule = new BusinessRuleInfo
                 {
                     Name = ParserHelper.GetWorkflowDisplayName(workflow),
                     UniqueId = Attr(workflow, "WorkflowId"),
                     IsActive = Value(workflow, "StateCode") == "1",
                     Scope = Value(workflow, "Scope") == "1" ? "Entité" : "Formulaire spécifique",
-                    RawXaml = Value(workflow, "JsonFormXml") ?? Value(workflow, "Xaml")
+                    RawXaml = RawXaml.ToString()
                 };
+
                 if (!string.IsNullOrWhiteSpace(rule.RawXaml))
                 {
                     var detail = ParseXaml(rule.RawXaml);
@@ -53,120 +60,74 @@ namespace dynamics.document.generator.Parsers
         /// <summary>Analyse directement le XAML d'une règle, sans exiger un wrapper Customizations.</summary>
         public BusinessRuleDetailedInfo ParseXaml(string xaml)
         {
-            if (string.IsNullOrWhiteSpace(xaml)) throw new ArgumentException("Le XAML est vide.", nameof(xaml));
-            // Certains exports contiennent des URI CLR avec des espaces. Ils restent des noms
-            // XML valides pour Dynamics, mais pas pour tous les lecteurs XML .NET.
-            var safe = Regex.Replace(xaml,@"(xmlns(?::[^=]+)?=""[^""]*"")",m => m.Value.Replace(" ", "%20")); var doc = XDocument.Parse(safe, LoadOptions.PreserveWhitespace);
-            var info = new BusinessRuleDetailedInfo { RawXaml = xaml };
+            if (String.IsNullOrWhiteSpace(xaml)) throw new ArgumentException("XAML is empty.", nameof(xaml));
+            var doc = XDocument.Parse(xaml, LoadOptions.PreserveWhitespace);
+            var result = new BusinessRuleDetailedInfo { RawXaml = xaml };
             var root = doc.Root;
-            if (root == null) return info;
-
+            if (root == null) return result;
+            var vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var sourceVars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var v in root.Descendants().Where(e => Local(e) == "Variable"))
+                if (Attr(v, "Name") != null && Attr(v, "Default") != null) vars[Attr(v, "Name")] = Attr(v, "Default");
             foreach (var e in root.DescendantsAndSelf())
             {
-                var entity = Attr(e, "EntityName");
-                if (!string.IsNullOrWhiteSpace(entity)) info.Entities.Add(entity);
-                var field = Attr(e, "Attribute") ?? Attr(e, "ControlId");
-                if (Local(e) == "GetEntityProperty" && !string.IsNullOrWhiteSpace(field)) info.Reads.Add(field);
-            }
-
-            var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var read in root.Descendants().Where(e => Local(e) == "GetEntityProperty"))
-            {
-                var target = Attr(read, "Value");
-                var field = Attr(read, "Attribute");
-                if (!string.IsNullOrWhiteSpace(target) && !string.IsNullOrWhiteSpace(field)) variables[Unwrap(target)] = field;
-            }
-            foreach (var expression in root.Descendants().Where(IsActivity("EvaluateExpression")))
-            {
-                var target = Unwrap(Argument(expression, "Result"));
-                if (!string.IsNullOrWhiteSpace(target)) variables[target] = Literal(Argument(expression, "Parameters"));
-            }
-            foreach (var condition in root.Descendants().Where(IsActivity("EvaluateCondition")))
-            {
-                var target = Unwrap(Argument(condition, "Result"));
-                var operand = Unwrap(Argument(condition, "Operand"));
-                var value = Unwrap(Argument(condition, "Parameters"));
-                var op = Argument(condition, "ConditionOperator") ?? "";
-                if (!string.IsNullOrWhiteSpace(target)) variables[target] = FormatCondition(variables, operand, op, value);
-            }
-            foreach (var logical in root.Descendants().Where(IsActivity("EvaluateLogicalCondition")))
-            {
-                var target = Unwrap(Argument(logical, "Result"));
-                var left = Unwrap(Argument(logical, "LeftOperand"));
-                var right = Unwrap(Argument(logical, "RightOperand"));
-                var op = Argument(logical, "LogicalOperator") ?? "";
-                if (!string.IsNullOrWhiteSpace(target)) variables[target] = "(" + Resolve(variables, left) + " " + op + " " + Resolve(variables, right) + ")";
-            }
-            foreach (var branch in root.Descendants().Where(IsActivity("ConditionBranch")))
-            {
-                var condition = Unwrap(Argument(branch, "Condition"));
-                info.Conditions.Add(new BusinessRuleCondition { Expression = Resolve(variables, condition), Branch = BranchOf(branch) });
-            }
-
-            foreach (var e in root.Descendants())
-            {
-                var type = Local(e);
-                if (type != "SetVisibility" && type != "SetFieldRequiredLevel" && type != "SetDefaultValue" && type != "SetAttributeValue" && type != "SetEntityProperty" && type != "SetDisplayMode" && type != "SetLock" && type != "LockField") continue;
-                var field = Attr(e, "ControlId") ?? Attr(e, "Attribute") ?? Attr(e, "AttributeName");
-                var value = FirstAttr(e, "IsVisible", "DisplayMode", "RequiredLevel", "Value", "Message", "Text");
-                if (type == "SetAttributeValue" && string.IsNullOrWhiteSpace(field))
+                var entity = Attr(e, "EntityName"); if (!String.IsNullOrWhiteSpace(entity)) AddDistinct(result.Entities, entity);
+                var t = Local(e);
+                if (t == "GetEntityProperty")
                 {
-                    var child = e.Descendants().FirstOrDefault(x => Local(x) == "SetEntityProperty");
-                    field = Attr(child, "Attribute") ?? field; value = Attr(child, "Value") ?? value;
+                    var field = FirstAttr(e, "Attribute", "AttributeName"); var target = Unwrap(Attr(e, "Value"));
+                    if (!String.IsNullOrWhiteSpace(field)) { AddDistinct(result.Reads, field); if (!String.IsNullOrWhiteSpace(target)) sourceVars[target] = field; }
                 }
-                if (!string.IsNullOrWhiteSpace(field)) info.Actions.Add(new BusinessRuleAction { Type = type, Field = field, Value = value ?? "", Branch = BranchOf(e), Entity = Attr(e, "EntityName") });
             }
-            info.ConditionFields.AddRange(info.Conditions.SelectMany(c => FieldsIn(c.Expression)).Distinct(StringComparer.OrdinalIgnoreCase));
-            info.ActionFields.AddRange(info.Actions.Select(a => a.Field).Distinct(StringComparer.OrdinalIgnoreCase));
-            return info;
+            foreach (var e in root.Descendants().Where(IsActivity("EvaluateExpression")))
+            {
+                var target = Unwrap(Argument(e, "Result")); if (target.Length > 0) vars[target] = ParseLiteral(Argument(e, "Parameters"));
+            }
+            foreach (var e in root.Descendants().Where(IsActivity("EvaluateCondition")))
+            {
+                var target = Unwrap(Argument(e, "Result")); var operand = Unwrap(Argument(e, "Operand"));
+                var p = Argument(e, "Parameters"); var op = Argument(e, "ConditionOperator") ?? "?";
+                var right = ParseLiteral(p);
+                var expr = Resolve(vars, sourceVars, operand) + " " + op + " " + Resolve(vars, sourceVars, right);
+                if (target.Length > 0) vars[target] = expr;
+            }
+            foreach (var e in root.Descendants().Where(IsActivity("EvaluateLogicalCondition")))
+            {
+                var target = Unwrap(Argument(e, "Result")); var left = Resolve(vars, sourceVars, Unwrap(Argument(e, "LeftOperand")));
+                var right = Resolve(vars, sourceVars, Unwrap(Argument(e, "RightOperand"))); var op = Argument(e, "LogicalOperator") ?? "AND";
+                if (target.Length > 0) vars[target] = "(" + left + " " + op.ToUpperInvariant() + " " + right + ")";
+            }
+            var branches = root.Descendants().Where(IsActivity("ConditionBranch")).ToList();
+            foreach (var b in branches)
+            {
+                var id = Attr(b, "DisplayName") ?? "ConditionBranch"; var c = Unwrap(Argument(b, "Condition"));
+                var condition = Resolve(vars, sourceVars, c); var isElse = c.Equals("True", StringComparison.OrdinalIgnoreCase) || (!vars.ContainsKey(c) && !root.Descendants().Any(x => Local(x) == "EvaluateCondition" && Unwrap(Argument(x, "Result")) == c));
+                var branch = new BusinessRuleBranch { Name = id, BranchKind = isElse ? "ELSE" : (result.Branches.Count == 0 ? "IF" : "ELSE IF"), Condition = isElse ? "" : condition };
+                var holder = b.Descendants().FirstOrDefault(x => Attr(x, "Key") == "Then");
+                if (holder != null) foreach (var a in holder.Descendants().Where(IsAction)) { var action = ReadAction(a); action.Branch = id; branch.Actions.Add(action); result.Actions.Add(action); }
+                result.Branches.Add(branch);
+                if (!isElse) result.Conditions.Add(new BusinessRuleCondition { Expression = condition, Branch = id });
+            }
+            // Be tolerant of action nodes not nested under a branch (or activities unknown to this parser).
+            foreach (var a in root.Descendants().Where(IsAction)) if (!result.Actions.Contains(result.Actions.FirstOrDefault(x => SameAction(x, a)))) { var x = ReadAction(a); x.Branch = BranchOf(a); result.Actions.Add(x); }
+            foreach (var e in root.Descendants().Where(x => Local(x) == "ActivityReference" && !IsKnownActivity(x))) { var u = new UnknownAction { ActivityName = Attr(e, "DisplayName") ?? Attr(e, "AssemblyQualifiedName") ?? "UnknownActivity", Branch = BranchOf(e) }; foreach (var p in e.Attributes()) u.RawProperties[p.Name.LocalName] = p.Value; result.UnknownActions.Add(u); }
+            foreach (var f in result.Reads) AddDistinct(result.ConditionFields, f);
+            foreach (var a in result.Actions) { AddDistinct(result.ActionFields, a.Field); if (!String.IsNullOrWhiteSpace(a.Entity)) AddDistinct(result.Entities, a.Entity); }
+            return result;
         }
-
-        private static Func<XElement, bool> IsActivity(string name) =>
-            (XElement e) => Local(e) == "ActivityReference"
-                && (Attr(e, "AssemblyQualifiedName") ?? "")
-                    .IndexOf("." + name + ",", StringComparison.OrdinalIgnoreCase) >= 0; private static string Local(XElement e) => e.Name.LocalName;
-        private static string Attr(XElement e, string name) => e == null ? null : (string)e.Attribute(name);
-        private static string Value(XElement e, string name) => e.Elements().FirstOrDefault(x => Local(x) == name)?.Value;
-        private static string FirstAttr(XElement e, params string[] names) { foreach (var n in names) { var v = Attr(e, n); if (v != null) return v; } return null; }
-        private static string Argument(XElement e, string key)
-        {
-            var container = e.Elements().FirstOrDefault(x => Local(x) == "ActivityReference.Arguments");
-            var arg = container?.Elements().FirstOrDefault(x => Attr(x, "Key") == key);
-            return arg == null ? null : arg.Value.Trim();
-        }
-        private static string Unwrap(string s) { if (string.IsNullOrWhiteSpace(s)) return ""; s = s.Trim(); return s.StartsWith("[") && s.EndsWith("]") ? s.Substring(1, s.Length - 2) : s; }
-        private static string Literal(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return "";
-            var m = Regex.Match(s, "\\\"((?:\\\\.|[^\\\"])*)\\\"");
-            return m.Success ? m.Groups[1].Value : s.Trim('[', ']', ' ');
-        }
-        private static string Resolve(Dictionary<string, string> vars, string s) { string v; return vars.TryGetValue(Unwrap(s), out v) ? v : Unwrap(s); }
-        private static string FormatCondition(Dictionary<string, string> vars, string operand, string op, string value) { return Resolve(vars, operand) + " " + op + " " + Resolve(vars, value); }
-        private static string BranchOf(XElement e) { var a = e.Ancestors().FirstOrDefault(x => Attr(x, "Key") == "Then" || Attr(x, "Key") == "Else"); return Attr(a, "Key") ?? ""; }
-        private static IEnumerable<string> FieldsIn(string expression) { return Regex.Matches(expression ?? "", @"\b[a-zA-Z_][a-zA-Z0-9_]*\b").Cast<Match>().Select(m => m.Value).Where(x => x.StartsWith("ainos_", StringComparison.OrdinalIgnoreCase) || x.StartsWith("arendt_", StringComparison.OrdinalIgnoreCase) || x == "processid"); }
-    }
-
-    public sealed class BusinessRuleDetailedInfo
-    {
-        public string RawXaml { get; set; }
-        public List<string> Entities { get; } = new List<string>();
-        public List<string> Reads { get; } = new List<string>();
-        public List<BusinessRuleCondition> Conditions { get; } = new List<BusinessRuleCondition>();
-        public List<BusinessRuleAction> Actions { get; } = new List<BusinessRuleAction>();
-        public List<string> ConditionFields { get; } = new List<string>();
-        public List<string> ActionFields { get; } = new List<string>();
-        public string ToReadableString() { var b = new StringBuilder(); b.AppendLine("Entités: " + string.Join(", ", Entities.Distinct())); b.AppendLine("Conditions:"); foreach (var c in Conditions) b.AppendLine("- [" + c.Branch + "] " + c.Expression); b.AppendLine("Actions:"); foreach (var a in Actions) b.AppendLine("- [" + a.Branch + "] " + a); return b.ToString(); }
-        public string ToMarkdown() => ToReadableString();
-    }
-    public sealed class BusinessRuleCondition { public string Expression { get; set; } public string Branch { get; set; } }
-    public sealed class BusinessRuleAction
-    {
-        public string Type { get; set; }
-        public string Field { get; set; }
-        public string Value { get; set; }
-        public string Branch { get; set; }
-        public string Entity { get; set; }
-        public override string ToString() => Type + " → " + Field + (string.IsNullOrWhiteSpace(Value) ? "" : " = " + Value);
+        public static Func<XElement, bool> IsActivity(string name) => e => Local(e) == "ActivityReference" && (Attr(e, "AssemblyQualifiedName") ?? "").IndexOf("." + name + ",", StringComparison.OrdinalIgnoreCase) >= 0;
+        private static bool IsKnownActivity(XElement e) => new[] { "ConditionSequence", "ConditionBranch", "EvaluateExpression", "EvaluateCondition", "EvaluateLogicalCondition", "Composite" }.Any(n => IsActivity(n)(e)) || IsAction(e);
+        private static bool IsAction(XElement e) => new[] { "SetVisibility", "SetFieldRequiredLevel", "SetRequiredLevel", "SetDisplayMode", "SetMessage", "SetDefaultValue", "SetAttributeValue", "SetEntityProperty", "LockField", "SetLock" }.Contains(Local(e));
+        private static BusinessRuleAction ReadAction(XElement e) { var a = new BusinessRuleAction { Type = Local(e), Field = FirstAttr(e, "ControlId", "Attribute", "AttributeName") ?? "", Value = FirstAttr(e, "IsVisible", "DisplayMode", "RequiredLevel", "Message", "Text", "Value") ?? "", Entity = Attr(e, "EntityName") ?? "" }; foreach (var p in e.Attributes()) a.RawProperties[p.Name.LocalName] = p.Value; if (a.Type == "SetAttributeValue" && a.Field == "") { var n = e.Descendants().FirstOrDefault(x => Local(x) == "SetEntityProperty"); if (n != null) { a.Field = Attr(n, "Attribute") ?? ""; a.Value = Attr(n, "Value") ?? a.Value; } } return a; }
+        private static string BranchOf(XElement e) => e.Ancestors().FirstOrDefault(x => Attr(x, "Key") == "Then" || Attr(x, "Key") == "Else") is XElement a ? Attr(a, "Key") ?? "" : "";
+        private static bool SameAction(BusinessRuleAction a, XElement e) => a.Type == Local(e) && (a.Field == FirstAttr(e, "ControlId", "Attribute", "AttributeName"));
+        private static string Resolve(Dictionary<string, string> v, Dictionary<string, string> s, string x) { x = Unwrap(x); if (v.TryGetValue(x, out var r)) return Resolve(v, s, r); if (s.TryGetValue(x, out r)) return r; return FormatLiteral(x); }
+        private static string ParseLiteral(string s) { var m = Regex.Match(s ?? "", "\\\"([^\\\"]*)\\\""); return m.Success ? m.Groups[1].Value : VariableRefs(s ?? "").FirstOrDefault() ?? FormatLiteral(s); }
+        private static string FormatLiteral(string s) => String.IsNullOrWhiteSpace(s) ? "null" : (s.Equals("True", StringComparison.OrdinalIgnoreCase) || s.Equals("False", StringComparison.OrdinalIgnoreCase) ? s : s);
+        private static IEnumerable<string> VariableRefs(string s) => Regex.Matches(s ?? "", @"(?<![\w])([A-Za-z_]\w*)(?![\w])").Cast<Match>().Select(m => m.Groups[1].Value).Where(x => !x.Equals("New", StringComparison.OrdinalIgnoreCase) && !x.Equals("Object", StringComparison.OrdinalIgnoreCase));
+        private static string Unwrap(string s) { s = (s ?? "").Trim(); return s.StartsWith("[") && s.EndsWith("]") ? s.Substring(1, s.Length - 2).Trim() : s; }
+        private static string Argument(XElement e, string key) => e.Elements().FirstOrDefault(x => Local(x) == "ActivityReference.Arguments")?.Elements().FirstOrDefault(x => Attr(x, "Key") == key)?.Value.Trim() ?? "";
+        private static string Local(XElement e) => e.Name.LocalName; private static string Attr(XElement e, string n) => e?.Attribute(n)?.Value; private static string FirstAttr(XElement e, params string[] n) { foreach (var x in n) { var v = Attr(e, x); if (v != null) return v; } return null; }
+        private static string Value(XElement e, string n) => e.Elements().FirstOrDefault(x => Local(x) == n)?.Value; private static void AddDistinct(List<string> l, string v) { if (!l.Any(x => String.Equals(x, v, StringComparison.OrdinalIgnoreCase))) l.Add(v); }
     }
 }

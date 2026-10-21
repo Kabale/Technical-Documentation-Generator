@@ -107,47 +107,41 @@ namespace dynamics.document.generator.Markdown
             sb.AppendLine("## 2. Business Rules");
             sb.AppendLine();
 
-            if (!entity.BusinessRules.Any())
-            {
-                sb.AppendLine("*Aucune Business Rule sur cette entité.*");
-                sb.AppendLine();
-                return;
+            RenderSection(sb, entity.BusinessRules);
+        }
+
+        public static string RenderSection(StringBuilder sb, IEnumerable<BusinessRuleInfo> rules)
+        {
+            var list = (rules ?? Enumerable.Empty<BusinessRuleInfo>()).ToList();
+            if (list.Count == 0) { 
+                sb.AppendLine("*Aucune Business Rule sur cette entité.*"); 
+                sb.AppendLine(); 
+                return sb.ToString(); 
             }
-
-            foreach (var rule in entity.BusinessRules)
-            {
-                sb.AppendLine($"### {rule.Name}");
-                sb.AppendLine();
-                sb.AppendLine($"- **Statut** : {(rule.IsActive ? "Active" : "Inactive")}");
-                sb.AppendLine($"- **Portée** : {rule.Scope}");
-                sb.AppendLine();
-
-                if (rule.Conditions.Any())
-                {
-                    sb.AppendLine("**Conditions** (toutes vraies) :");
-                    foreach (var c in rule.Conditions)
-                        sb.AppendLine($"- `{c.Field}` {c.Operator} {c.Value}");
-                    sb.AppendLine();
-                }
-                if (rule.Actions.Any())
-                {
-                    sb.AppendLine("**Actions** :");
-                    foreach (var a in rule.Actions)
-                        sb.AppendLine($"- {a.Type} → `{a.Field}` = {a.Value}");
-                    sb.AppendLine();
-                }
-
-                if (rule.ActionsSummary.Any())
-                {
-                    sb.AppendLine("**Actions** :");
-                    sb.AppendLine();
-                    foreach (var action in rule.ActionsSummary)
-                    {
-                        sb.AppendLine($"- {action}");
-                    }
-                    sb.AppendLine();
-                }
+            foreach (var r in list) { 
+                sb.Append(RenderRule(r)); 
             }
+            return sb.ToString();
+        }
+
+        public static string RenderRule(BusinessRuleInfo r)
+        {
+            var sb = new StringBuilder(); sb.AppendLine($"### {r.Name}"); sb.AppendLine();
+            sb.AppendLine($"- **Statut** : {(r.IsActive ? "Active" : "Inactive")}");
+            sb.AppendLine($"- **Portée** : {r.Scope}");
+            var fields = r.Detail.ConditionFields.Concat(r.Detail.ActionFields).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (fields.Count > 0) { 
+                sb.AppendLine("- **Champs concernés** : " + String.Join(", ", fields.Select(f => "`" + f + "`")) + "."); 
+            }
+            if (!String.IsNullOrWhiteSpace(r.EntityName)) sb.AppendLine($"- **Entité** : `{r.EntityName}`");
+            sb.AppendLine();
+            foreach (var b in r.Detail.Branches) { sb.AppendLine((b.BranchKind == "ELSE" ? "ELSE" : b.BranchKind + (String.IsNullOrWhiteSpace(b.Condition) ? "" : " " + b.Condition))); foreach (var a in b.Actions) sb.AppendLine("  - " + Action(a)); }
+           
+            sb.AppendLine(); return sb.ToString();
+        }
+
+        private static string Action(BusinessRuleAction a) { 
+            var v = String.IsNullOrWhiteSpace(a.Value) ? "" : " = " + a.Value; return a.Type + " " + a.Field + v; 
         }
 
         private void AppendFormScriptsSection(StringBuilder sb, EntityDocumentation entity)
