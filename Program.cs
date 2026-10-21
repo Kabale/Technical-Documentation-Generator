@@ -12,9 +12,9 @@ namespace dynamics.document.generator
         static void Main(string[] args)
         {
             // === Configuration ===
-            string zipPath = @"C:\Temp\Arendt_Termination_Process_Changes_1_0_0_0.zip";
-            string extractFolder = @"C:\Temp\SolutionExtract_TerminationProcess";
-            string docOutputFolder = @"C:\Temp\Documentation_TerminationProcess";
+            string zipPath = @"D:\Temp\Reporting\GlobalAggregatedSolution_1_0_0_0.zip";
+            string extractFolder = @"D:\Temp\Reporting\SolutionExtract_Global";
+            string docOutputFolder = @"D:\Temp\Reporting\Documentation_Global";
             string solutionDisplayName = "Arendt Customizations";
 
             /*
@@ -36,6 +36,17 @@ namespace dynamics.document.generator
                 var extractor = new SolutionZipExtractor();
                 extractor.Extract(zipPath, extractFolder);
 
+                // TEST VSC
+                var solutionParser = new SolutionParser(extractor.SolutionXml, extractor.CustomizationsXml);
+                var solution =solutionParser.ParseSolution(); 
+
+                Console.WriteLine($"Solution '{solutionDisplayName}' analysée avec succès :");
+                Console.WriteLine($"   - {solution.RootComponents.Count} composant(s) racine");
+                Console.WriteLine($"   - {solution.Entities.Count} entité(s)");
+                Console.WriteLine($"   - {solution.Workflows.Count} workflow(s)");
+
+
+                /*
                 // 2. Lister TOUTES les entités de la solution
                 var entityLister = new SolutionEntityLister(extractor.SolutionXml, extractor.CustomizationsXml);
                 var entityLogicalNames = entityLister.GetEntityLogicalNames();
@@ -107,6 +118,7 @@ namespace dynamics.document.generator
                 //https://vmd-dyn-01.dev.as.local/AS360/main.aspx?app=d365default&forceUCI=1&pagetype=entityrecord&etn=account&id=91eed1eb-ff45-ec11-aecf-000c297958dd
                 //https://vmd-dyn-01.dev.as.local/AS360/Tools/ProcessControl/UnifiedProcessDesigner.aspx?id=%7b9774572E-7301-421F-A367-39037F56EF2F%7d
                 Console.WriteLine($"\n✅ Documentation générée avec succès dans : {docOutputFolder}");
+                */
             }
             catch (Exception ex)
             {
