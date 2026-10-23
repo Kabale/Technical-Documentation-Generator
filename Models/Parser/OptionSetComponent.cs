@@ -8,5 +8,6 @@ namespace dynamics.document.generator.Models.Parser
 {
     public class OptionSetComponent
     {
+        public List<OptionComponent> options { get; set; } = new List<OptionComponent>();
     }
 }

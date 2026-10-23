@@ -12,22 +12,18 @@ namespace dynamics.document.generator
         static void Main(string[] args)
         {
             // === Configuration ===
+            /*
             string zipPath = @"D:\Temp\Reporting\GlobalAggregatedSolution_1_0_0_0.zip";
             string extractFolder = @"D:\Temp\Reporting\SolutionExtract_Global";
             string docOutputFolder = @"D:\Temp\Reporting\Documentation_Global";
             string solutionDisplayName = "Arendt Customizations";
-
-            /*
-            string zipPath = @"D:\Temp\Repport\GlobalAggregatedSolution_1_0_0_0.zip";
-            string extractFolder = @"D:\Temp\Repport\SolutionExtract";
-            string docOutputFolder = @"D:\Temp\Repport\Documentation_Global";
-            string solutionDisplayName = "Arendt Customizations";
-
-            string zipPath = @"D:\Temp\Repport\RiskMatrixCalculation_1_0_0_1.zip";
-            string extractFolder = @"D:\Temp\Repport\RiskMatrix_SolutionExtract";
-            string docOutputFolder = @"D:\Temp\Repport\Documentation_RiskMatrix";
-            string solutionDisplayName = "Arendt Customizations";
             */
+
+            string zipPath = @"C:\Temp\Arendt_Termination_Process_Changes_1_0_0_0.zip";
+            string extractFolder = @"C:\Temp\SolutionExtract_TerminationProcess";
+            string docOutputFolder = @"C:\Temp\Documentation_TerminationProcess";
+            string solutionDisplayName = "Arendt Customizations";
+            
             Console.WriteLine("=== Génération de documentation technique Dynamics 365 ===\n");
 
             try
@@ -44,6 +40,26 @@ namespace dynamics.document.generator
                 Console.WriteLine($"   - {solution.RootComponents.Count} composant(s) racine");
                 Console.WriteLine($"   - {solution.Entities.Count} entité(s)");
                 Console.WriteLine($"   - {solution.Workflows.Count} workflow(s)");
+
+
+                foreach(var ec in solution.Entities)
+                {
+                    Console.WriteLine($"== Entity {ec.DisplayName} ({ec.LogicalName}) ==");
+                    Console.WriteLine($"**Description** = {ec.Description}");
+                    Console.WriteLine();
+                    Console.WriteLine($"**Fields ({ec.fields.Count}) :");
+                    Console.WriteLine($"| Display Name | Logical Name | Type | Description |");
+                    Console.WriteLine($"| ------------ | ------------ | ---- | ----------- |");
+                    foreach (var field in ec.fields)
+                        Console.WriteLine($"| {field.DisplayName} | {field.LogicalName} | {field.Type} | {field.Description} |");
+                    Console.WriteLine();
+                    Console.WriteLine($"**Forms ({ec.forms.Count}) :");
+                    Console.WriteLine($"| Display Name | Form ID | Type | Description |");
+                    Console.WriteLine($"| ------------ | ------------ | ---- | ----------- |");
+                    foreach (var form in ec.forms)
+                        Console.WriteLine($"| {form.Name}| {form.Id} | {form.Type} | {form.Description} |");
+                    Console.WriteLine();
+                }
 
 
                 /*
